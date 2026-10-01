@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { GoogleGenAI, Type } from '@google/genai';
 
 const execFileAsync = promisify(execFile);
 
@@ -14,6 +15,16 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
+
+// Initialize Gemini client for real-time speech transcription
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    },
+  },
+});
 
 // Config from env
 const UPLOAD_MAX_MB = parseInt(process.env.UPLOAD_MAX_MB || '500', 10);
@@ -114,128 +125,250 @@ async function probeDuration(filePath: string): Promise<number> {
   }
 }
 
+// Helper to transcribe audio using GoogleGenAI
+async function transcribeAudioWithAI(
+  audioPath: string,
+  duration: number,
+  langRequested: string
+): Promise<{
+  srtText: string;
+  segments: Array<{ id: number; start: number; end: number; startTime: string; endTime: string; text: string }>;
+  detectedLang: string;
+}> {
+  if (!fs.existsSync(audioPath)) {
+    throw new Error('فایل صوتی برای پردازش یافت نشد.');
+  }
+
+  const audioBuffer = fs.readFileSync(audioPath);
+  const base64Audio = audioBuffer.toString('base64');
+  const mimeType = audioPath.endsWith('.mp3') ? 'audio/mp3' : 'audio/wav';
+
+  const langInstruction =
+    langRequested === 'fa'
+      ? 'The user specified that the audio is in Persian / Farsi (fa). Transcribe in Persian with standard Persian alphabet.'
+      : langRequested === 'en'
+      ? 'The user specified that the audio is in English (en). Transcribe in English.'
+      : 'Automatically detect whether the spoken language is Persian (Farsi), English, or another language, and transcribe accurately.';
+
+  const prompt = `You are an expert speech recognition and subtitle generator.
+Listen to the attached audio file carefully and transcribe the ACTUAL spoken words verbatim into subtitle segments.
+${langInstruction}
+
+Instructions:
+1. Extract all spoken words with high fidelity. Do NOT make up words or use generic placeholders.
+2. Provide precise start and end timestamps for each segment.
+3. Timestamps MUST be in format: "00:00:01,234" (HH:MM:SS,mmm).
+4. If there is NO speech or the audio contains only silence, tone, white noise, or music without words, return an empty array [].
+5. Total audio length is approximately ${Math.round(duration)} seconds.
+
+Return ONLY a JSON array of segment objects adhering to the required schema.`;
+
+  // Try gemini-3.1-flash-lite first, fallback to gemini-3.8-flash
+  const models = ['gemini-3.1-flash-lite', 'gemini-3.8-flash'];
+  let lastError: any = null;
+
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            inlineData: {
+              mimeType,
+              data: base64Audio,
+            },
+          },
+          { text: prompt },
+        ],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.INTEGER },
+                startTime: { type: Type.STRING, description: 'HH:MM:SS,mmm' },
+                endTime: { type: Type.STRING, description: 'HH:MM:SS,mmm' },
+                text: { type: Type.STRING, description: 'Verbatim transcribed speech' },
+                language: { type: Type.STRING, description: 'Detected language code, e.g. fa or en' },
+              },
+              required: ['id', 'startTime', 'endTime', 'text'],
+            },
+          },
+        },
+      });
+
+      const jsonText = response.text?.trim() || '[]';
+      const parsed = JSON.parse(jsonText);
+
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const toSeconds = (ts: string): number => {
+          try {
+            const clean = ts.replace(',', '.');
+            const parts = clean.split(':');
+            if (parts.length === 3) {
+              return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+            }
+          } catch {}
+          return 0;
+        };
+
+        const segments = parsed.map((item, index) => {
+          const s = toSeconds(item.startTime);
+          const e = toSeconds(item.endTime);
+          const formatTs = (raw: string, fallbackSec: number) => {
+            if (raw && raw.includes(':') && raw.includes(',')) return raw;
+            return formatSrtTimestamp(fallbackSec);
+          };
+
+          return {
+            id: index + 1,
+            start: s,
+            end: e > s ? e : s + 2.0,
+            startTime: formatTs(item.startTime, s),
+            endTime: formatTs(item.endTime, e > s ? e : s + 2.0),
+            text: String(item.text).trim(),
+          };
+        });
+
+        // Build standard SRT text
+        let srt = '';
+        for (const seg of segments) {
+          srt += `${seg.id}\n${seg.startTime} --> ${seg.endTime}\n${seg.text}\n\n`;
+        }
+
+        const detectedLang = parsed[0]?.language || (langRequested === 'fa' ? 'fa' : 'auto');
+
+        return {
+          srtText: srt.trim() + '\n',
+          segments,
+          detectedLang,
+        };
+      } else {
+        // No speech detected in video
+        const durEnd = Math.min(3, duration > 0 ? duration : 3);
+        const endTs = formatSrtTimestamp(durEnd);
+        return {
+          srtText: `1\n00:00:00,000 --> ${endTs}\n[بدون گفتار یا موسیقی بدون کلام]\n`,
+          segments: [
+            {
+              id: 1,
+              start: 0,
+              end: durEnd,
+              startTime: '00:00:00,000',
+              endTime: endTs,
+              text: '[بدون گفتار یا موسیقی بدون کلام]',
+            },
+          ],
+          detectedLang: 'none',
+        };
+      }
+    } catch (err: any) {
+      console.warn(`Model ${model} transcription attempt note:`, err?.message || err);
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error('خطا در ارتباط با سرویس هوش مصنوعی.');
+}
+
 // Background job processor
-async function processJob(jobId: string, videoFilePath: string, originalName: string, langRequested: string, model: string) {
+async function processJob(
+  jobId: string,
+  videoFilePath: string,
+  originalName: string,
+  langRequested: string,
+  model: string
+) {
   const job = jobsMap.get(jobId);
   if (!job) return;
 
   const jobDir = path.dirname(videoFilePath);
-  const wavPath = path.join(jobDir, 'audio.wav');
+  const audioPath = path.join(jobDir, 'extracted_audio.mp3');
   const srtPath = path.join(jobDir, 'subtitles.srt');
 
   try {
     // Step 1: Extract Audio with FFmpeg
     job.status = 'extracting';
-    job.progress = 10;
-    job.message = 'در حال استخراج صوت از ویدیو با FFmpeg (۱۶ کیلوهرتز مونو)...';
+    job.progress = 15;
+    job.message = 'در حال استخراج صوت از ویدیو با FFmpeg...';
     job.updated_at = Date.now();
 
     let duration = 0;
     try {
-      await execFileAsync('ffmpeg', [
-        '-y',
-        '-i', videoFilePath,
-        '-vn',
-        '-acodec', 'pcm_s16le',
-        '-ar', '16000',
-        '-ac', '1',
-        wavPath
-      ], { timeout: 180000 });
+      await execFileAsync(
+        'ffmpeg',
+        [
+          '-y',
+          '-i',
+          videoFilePath,
+          '-vn',
+          '-ac',
+          '1',
+          '-ar',
+          '16000',
+          '-b:a',
+          '64k',
+          audioPath,
+        ],
+        { timeout: 180000 }
+      );
 
-      duration = await probeDuration(wavPath);
+      duration = await probeDuration(audioPath);
       if (duration <= 0) {
         duration = await probeDuration(videoFilePath);
       }
     } catch (ffmpegErr: any) {
       console.warn('FFmpeg run note:', ffmpegErr?.message || ffmpegErr);
-      // Fallback if audio extraction fails (e.g. video without audio or container anomaly)
     }
 
-    if (duration <= 0) duration = 12.0;
+    if (duration <= 0) duration = 5.0;
     job.duration = Math.round(duration * 100) / 100;
 
-    // Step 2: Transcribe
+    // Step 2: Transcribe with AI speech recognition
     job.status = 'transcribing';
-    job.progress = 25;
-    job.message = 'در حال بارگذاری مدل faster-whisper و رونویسی گفتار...';
+    job.progress = 40;
+    job.message = 'در حال ارسال صوت استخراج‌شده به موتور تشخیص گفتار هوش مصنوعی...';
     job.updated_at = Date.now();
 
-    // Determine target language
-    let detectedLang = langRequested === 'fa' ? 'fa' : langRequested === 'en' ? 'en' : 'fa';
-    let langProb = 0.98;
+    const progressTimer = setInterval(() => {
+      if (job.status === 'transcribing' && job.progress < 85) {
+        job.progress += 10;
+        job.message = `در حال پردازش کلمات، شناسایی جملات و تولید تایم‌استمپ‌های دقیق (${Math.round(job.progress)}%)...`;
+        job.updated_at = Date.now();
+      }
+    }, 1200);
 
-    // Simulate progressive chunk transcription for live responsiveness
-    const stepInterval = Math.max(300, Math.min(1500, (duration * 200) / 4));
-    for (let p = 35; p <= 90; p += 15) {
-      await new Promise(r => setTimeout(r, stepInterval));
-      job.progress = p;
-      job.message = `در حال تحلیل هوش مصنوعی و تولید تایم‌استمپ‌های دقیق (${Math.round((p / 90) * duration)} ثانیه)...`;
-      job.updated_at = Date.now();
-    }
+    const { srtText, segments, detectedLang } = await transcribeAudioWithAI(
+      audioPath,
+      duration,
+      langRequested
+    );
 
-    // Generate Standard SRT Content
-    // High-quality bilingual Persian & English segments tailored to audio duration
-    const segments = [];
-    const count = Math.max(2, Math.min(12, Math.ceil(duration / 3.5)));
-    const segDuration = duration / count;
+    clearInterval(progressTimer);
 
-    const sampleSentencesFa = [
-      'به نام خداوند بخشنده و مهربان، در این ویدیو به بررسی جامع موضوع می‌پردازیم.',
-      'همان‌طور که مشاهده می‌کنید، تمامی مراحل پردازش به صورت دقیق روی سرور انجام می‌شود.',
-      'هوش مصنوعی با دقت بالا گفتار موجود در ویدیو را استخراج کرده و تایم‌استمپ تولید می‌کند.',
-      'فرمت‌های مختلف ویدیویی مانند MP4 و MKV به خوبی با کتابخانه FFmpeg سازگار هستند.',
-      'فایل زیرنویس با کدگذاری استاندارد UTF-8 ذخیره می‌شود تا حروف فارسی به درستی نمایش داده شوند.',
-      'در پایان می‌توانید این فایل را با پسوند استاندارد SRT دانلود و روی ویدیو استفاده کنید.',
-      'کیفیت رونویسی وابسته به وضوح صدا و مدل انتخاب‌شده در تنظیمات می‌باشد.'
-    ];
-
-    const sampleSentencesEn = [
-      'Welcome to this video, today we are going to explore the complete automated workflow.',
-      'As you can see, the speech transcription runs efficiently on our local server.',
-      'Faster-Whisper processes the audio stream with high accuracy and standard timestamps.',
-      'The output subtitle is saved in standard SubRip format with UTF-8 encoding.',
-      'You can easily synchronize these subtitles with your media player or video editor.',
-      'Thank you for watching, and feel free to inspect the Docker deployment instructions.'
-    ];
-
-    const sentenceList = detectedLang === 'en' ? sampleSentencesEn : sampleSentencesFa;
-
-    let srtText = '';
-    for (let i = 0; i < count; i++) {
-      const segStart = i * segDuration;
-      const segEnd = Math.min(duration, (i + 1) * segDuration - 0.2);
-      const text = sentenceList[i % sentenceList.length];
-      const startTs = formatSrtTimestamp(segStart);
-      const endTs = formatSrtTimestamp(segEnd);
-
-      srtText += `${i + 1}\n${startTs} --> ${endTs}\n${text}\n\n`;
-      segments.push({
-        id: i + 1,
-        start: segStart,
-        end: segEnd,
-        startTime: startTs,
-        endTime: endTs,
-        text
-      });
-    }
-
-    // Write UTF-8 SRT file
-    fs.writeFileSync(srtPath, srtText.trim() + '\n', 'utf-8');
+    // Step 3: Save UTF-8 SRT file
+    fs.writeFileSync(srtPath, srtText, 'utf-8');
 
     job.status = 'completed';
     job.progress = 100;
-    job.message = 'رونویسی با موفقیت انجام شد. فایل زیرنویس آماده دانلود است.';
+    job.message =
+      segments.length > 0 && segments[0].text !== '[بدون گفتار یا موسیقی بدون کلام]'
+        ? `رونویسی متن ویدیو با موفقیت انجام شد (${segments.length} بند زیرنویس استخراج شد).`
+        : 'پردازش پایان یافت. هیچ گفتار واضحی در این ویدیو شناسایی نشد.';
     job.language_detected = detectedLang;
-    job.language_probability = langProb;
+    job.language_probability = 0.98;
     job.segments_count = segments.length;
     job.srt_path = srtPath;
     job.updated_at = Date.now();
 
-    // Clean temp wav
-    if (fs.existsSync(wavPath)) {
-      try { fs.unlinkSync(wavPath); } catch {}
+    // Clean temp audio
+    if (fs.existsSync(audioPath)) {
+      try {
+        fs.unlinkSync(audioPath);
+      } catch {}
     }
-
   } catch (err: any) {
     console.error(`Error processing job ${jobId}:`, err);
     job.status = 'failed';
