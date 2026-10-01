@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhisperVideoSRT - تبدیل ویدیو به زیرنویس</title>
+  <!-- Vazirmatn Persian Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Vazirmatn', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Vazirmatn', sans-serif; }
+    .dir-ltr { direction: ltr; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-amber-500/30 selection:text-amber-200">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-violet-600 to-amber-500 flex items-center justify-center shadow-lg shadow-violet-500/20 text-white font-bold text-lg">
+          🎙️
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-extrabold text-base sm:text-lg tracking-tight bg-gradient-to-r from-white via-slate-200 to-amber-300 bg-clip-text text-transparent">
+              سامانه تبدیل ویدیو به زیرنویس
+            </span>
+            <span class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-violet-500/10 text-violet-300 border border-violet-500/30">
+              faster-whisper
+            </span>
+          </div>
+          <p class="text-xs text-slate-400 hidden sm:block">
+            رونویسی گفتار و تولید زیرنویس استاندارد SRT با FFmpeg و هوش مصنوعی
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <a href="/docs" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-mono bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-1">
+          <span>مستندات API</span>
+          <span class="text-[10px] text-amber-400">(/docs)</span>
+        </a>
+        <button id="token-btn" onclick="openTokenModal()" class="p-2 rounded-lg border bg-slate-800/50 border-slate-700 text-slate-400 hover:text-white transition" title="تنظیم توکن دسترسی">
+          🔑
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Left Column: Upload & Options -->
+      <div class="lg:col-span-7 space-y-6">
+        <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl relative">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-base sm:text-lg font-bold flex items-center gap-2 text-white">
+              🎬 انتخاب یا کشیدن فایل ویدیو
+            </h2>
+            <span class="text-xs text-slate-400">
+              فرمت‌های مجاز: <code class="text-amber-400 font-mono">mp4, mkv, mov</code>
+            </span>
+          </div>
+
+          <!-- Dropzone -->
+          <div id="dropzone" onclick="document.getElementById('file-input').click()" class="border-2 border-dashed border-slate-700 hover:border-violet-500 bg-slate-950/40 hover:bg-slate-950/70 rounded-xl p-8 text-center cursor-pointer transition">
+            <input type="file" id="file-input" accept=".mp4,.mkv,.mov" class="hidden" onchange="handleFileSelected(this.files[0])">
+            <div id="dropzone-empty" class="flex flex-col items-center gap-3">
+              <div class="w-14 h-14 rounded-2xl bg-violet-600/10 text-violet-400 flex items-center justify-center text-3xl">
+                ☁️
+              </div>
+              <p class="font-semibold text-slate-200 text-sm sm:text-base">
+                فایل ویدیوی خود را اینجا رها کنید، یا برای انتخاب کلیک نمایید
+              </p>
+              <p class="text-xs text-slate-500" id="max-size-hint">
+                حداکثر حجم مجاز: ۵۰۰ مگابایت
+              </p>
+            </div>
+
+            <div id="dropzone-selected" class="hidden flex-col items-center gap-3">
+              <div class="w-14 h-14 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-3xl">
+                ✅
+              </div>
+              <div>
+                <p id="selected-file-name" class="font-semibold text-white text-base max-w-sm truncate"></p>
+                <p id="selected-file-info" class="text-xs text-slate-400 mt-1"></p>
+              </div>
+              <span class="text-xs text-violet-400 hover:underline">برای تغییر فایل، مجدداً کلیک کنید</span>
+            </div>
+          </div>
+
+          <!-- File Error -->
+          <div id="file-error" class="hidden mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs sm:text-sm"></div>
+
+          <!-- Settings -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-5 pt-5 border-t border-slate-800">
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1.5">زبان رونویسی (Language)</label>
+              <select id="language-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-500">
+                <option value="auto">تشخیص خودکار زبان (Auto-detect)</option>
+                <option value="fa">فارسی (Persian / Farsi)</option>
+                <option value="en">انگلیسی (English)</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1.5">مدل ویسپر (Whisper Model)</label>
+              <select id="model-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-violet-500 font-mono">
+                <option value="tiny">tiny (سریع‌ترین)</option>
+                <option value="base" selected>base (پیش‌فرض CPU)</option>
+                <option value="small">small (دقت بالاتر)</option>
+                <option value="medium">medium (دقت حرفه‌ای)</option>
+                <option value="large-v3">large-v3 (حداکثر دقت)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Submit Button -->
+          <div class="mt-6">
+            <button id="start-btn" disabled onclick="startUpload()" class="w-full py-3 px-6 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center gap-2 transition bg-slate-800 text-slate-500 cursor-not-allowed">
+              <span>شروع استخراج و تولید زیرنویس</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Status & Subtitles -->
+      <div class="lg:col-span-5 space-y-6">
+        <div id="job-card" class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl relative hidden">
+          <div class="flex items-center justify-between pb-4 border-b border-slate-800">
+            <h3 class="font-bold text-base flex items-center gap-2 text-white">
+              ⏱️ وضعیت پردازش درخواست
+            </h3>
+            <span id="job-badge" class="text-xs px-2.5 py-1 rounded-full font-medium">در صف انتظار</span>
+          </div>
+
+          <div class="mt-4 p-3 rounded-xl bg-slate-950/70 border border-slate-800 flex items-center justify-between">
+            <div>
+              <span class="text-[11px] text-slate-500 block">شناسه درخواست (Job ID):</span>
+              <code id="job-id-text" class="text-xs font-mono text-amber-400 break-all select-all"></code>
+            </div>
+            <button onclick="copyJobId()" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">کپی</button>
+          </div>
+
+          <!-- Progress -->
+          <div class="mt-5 space-y-2">
+            <div class="flex items-center justify-between text-xs">
+              <span id="job-message" class="text-slate-300 font-medium">در حال شروع...</span>
+              <span id="job-percent" class="font-mono text-violet-400 font-bold">0%</span>
+            </div>
+            <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden p-0.5 border border-slate-800">
+              <div id="job-progress-bar" class="h-full rounded-full transition-all duration-300 bg-gradient-to-r from-violet-600 to-amber-500" style="width: 5%"></div>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div id="job-actions" class="mt-6 pt-5 border-t border-slate-800 space-y-3 hidden">
+            <button id="download-btn" onclick="downloadSrt()" class="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition">
+              <span>📥 دانلود فایل زیرنویس (UTF-8 SRT)</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="empty-card" class="bg-slate-900/40 border border-slate-800/60 rounded-2xl p-8 text-center text-slate-500 flex flex-col items-center justify-center min-h-[260px]">
+          <span class="text-4xl mb-3">📁</span>
+          <p class="font-semibold text-slate-400">هیچ درخواست فعالی وجود ندارد</p>
+          <p class="text-xs text-slate-500 mt-1 max-w-xs">
+            پس از بارگذاری ویدیو، مراحل استخراج صدا با FFmpeg و رونویسی در این بخش نمایش می‌یابد.
+          </p>
+        </div>
+
+        <!-- Subtitles Preview Area -->
+        <div id="subtitles-card" class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl hidden">
+          <div class="flex items-center justify-between mb-3">
+            <h4 class="font-bold text-sm text-white">📝 پیش‌نمایش متن زیرنویس استخراج‌شده</h4>
+            <button onclick="copySubtitlesText()" class="text-xs text-violet-400 hover:underline">کپی متن</button>
+          </div>
+          <pre id="srt-preview-box" class="bg-slate-950 p-3 rounded-xl text-xs font-mono text-slate-300 max-h-60 overflow-y-auto border border-slate-800/80 dir-ltr text-left leading-relaxed select-all"></pre>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Token Modal -->
+  <div id="token-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+        <h3 class="font-bold text-base text-white">🔑 تنظیم توکن دسترسی (API Access Token)</h3>
+        <button onclick="closeTokenModal()" class="text-slate-500 hover:text-slate-300 text-lg">&times;</button>
+      </div>
+      <p class="text-xs text-slate-400 leading-relaxed">
+        اگر متغیر <code class="text-amber-400">API_ACCESS_TOKEN</code> در تنظیمات سرور فعال است، توکن خود را در اینجا وارد کنید:
+      </p>
+      <input type="password" id="token-input" placeholder="مقدار API_ACCESS_TOKEN..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-200 font-mono">
+      <div class="flex justify-end gap-2 pt-2">
+        <button onclick="closeTokenModal()" class="px-4 py-2 rounded-xl text-xs text-slate-400 hover:bg-slate-800">انصراف</button>
+        <button onclick="saveToken()" class="px-4 py-2 rounded-xl text-xs font-bold bg-violet-600 hover:bg-violet-500 text-white">ذخیره توکن</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="border-t border-slate-800/80 bg-slate-950/80 py-4 mt-8 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <span>سامانه رونویسی گفتار و تولید زیرنویس استاندارد فارسی و انگلیسی</span>
+      <span>FastAPI • faster-whisper • FFmpeg</span>
+    </div>
+  </footer>
+
+  <script>
+    let selectedFile = null;
+    let currentJobId = null;
+    let pollInterval = null;
+    let apiToken = localStorage.getItem('whisper_api_token') || '';
+
+    // Initialize config
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => {
+        if (cfg.upload_max_mb) {
+          document.getElementById('max-size-hint').innerText = `حداکثر حجم مجاز: ${cfg.upload_max_mb} مگابایت`;
+        }
+      }).catch(() => {});
+
+    function handleFileSelected(file) {
+      if (!file) return;
+      const errBox = document.getElementById('file-error');
+      errBox.classList.add('hidden');
+
+      const ext = file.name.split('.').pop().toLowerCase();
+      if (!['mp4', 'mkv', 'mov'].includes(ext)) {
+        errBox.innerText = 'فرمت فایل مجاز نیست. فقط فرمت‌های mp4، mkv و mov مجاز می‌باشند.';
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      selectedFile = file;
+      document.getElementById('dropzone-empty').classList.add('hidden');
+      document.getElementById('dropzone-selected').classList.remove('hidden');
+      document.getElementById('dropzone-selected').classList.add('flex');
+      document.getElementById('selected-file-name').innerText = file.name;
+      document.getElementById('selected-file-info').innerText = `${(file.size / (1024*1024)).toFixed(2)} MB | فرمت: ${ext.toUpperCase()}`;
+
+      const btn = document.getElementById('start-btn');
+      btn.disabled = false;
+      btn.classList.remove('bg-slate-800', 'text-slate-500', 'cursor-not-allowed');
+      btn.classList.add('bg-gradient-to-r', 'from-violet-600', 'to-amber-500', 'hover:from-violet-500', 'hover:to-amber-400', 'text-white', 'shadow-lg');
+    }
+
+    // Drag and drop events
+    const dropzone = document.getElementById('dropzone');
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('border-violet-500', 'bg-violet-500/10'); });
+    dropzone.addEventListener('dragleave', () => { dropzone.classList.remove('border-violet-500', 'bg-violet-500/10'); });
+    dropzone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('border-violet-500', 'bg-violet-500/10');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleFileSelected(e.dataTransfer.files[0]);
+      }
+    });
+
+    async function startUpload() {
+      if (!selectedFile) return;
+      const btn = document.getElementById('start-btn');
+      btn.disabled = true;
+      btn.innerHTML = '<span>در حال ارسال فایل به سرور...</span>';
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+      formData.append('language', document.getElementById('language-select').value);
+      formData.append('model', document.getElementById('model-select').value);
+
+      const headers = {};
+      if (apiToken) headers['X-API-Token'] = apiToken;
+
+      try {
+        const resp = await fetch('/api/jobs/upload', {
+          method: 'POST',
+          headers: headers,
+          body: formData
+        });
+
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({ detail: 'خطا در بارگذاری' }));
+          throw new Error(errData.detail || errData.error || `خطا (${resp.status})`);
+        }
+
+        const data = await resp.json();
+        currentJobId = data.job_id;
+        showJob(data);
+        startPolling(data.job_id);
+
+      } catch (err) {
+        const errBox = document.getElementById('file-error');
+        errBox.innerText = err.message || 'خطا در ارسال فایل.';
+        errBox.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = '<span>شروع استخراج و تولید زیرنویس</span>';
+      }
+    }
+
+    function showJob(data) {
+      document.getElementById('empty-card').classList.add('hidden');
+      const card = document.getElementById('job-card');
+      card.classList.remove('hidden');
+      document.getElementById('job-id-text').innerText = data.job_id;
+      updateJobUI(data);
+    }
+
+    function updateJobUI(job) {
+      const badge = document.getElementById('job-badge');
+      const msg = document.getElementById('job-message');
+      const pct = document.getElementById('job-percent');
+      const bar = document.getElementById('job-progress-bar');
+      const actions = document.getElementById('job-actions');
+
+      pct.innerText = `${Math.round(job.progress || 0)}%`;
+      bar.style.width = `${Math.max(5, job.progress || 0)}%`;
+      msg.innerText = job.message || '';
+
+      if (job.status === 'completed') {
+        badge.className = 'text-xs px-2.5 py-1 rounded-full font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+        badge.innerText = 'تکمیل شده';
+        bar.className = 'h-full rounded-full transition-all duration-300 bg-emerald-500';
+        actions.classList.remove('hidden');
+        loadSubtitlesPreview(job.job_id);
+      } else if (job.status === 'failed') {
+        badge.className = 'text-xs px-2.5 py-1 rounded-full font-medium bg-red-500/20 text-red-300 border border-red-500/40';
+        badge.innerText = 'خطا';
+        bar.className = 'h-full rounded-full transition-all duration-300 bg-red-500';
+      } else {
+        badge.className = 'text-xs px-2.5 py-1 rounded-full font-medium bg-violet-500/20 text-violet-300 border border-violet-500/40 animate-pulse';
+        badge.innerText = job.status === 'extracting' ? 'استخراج صوت با FFmpeg' : 'رونویسی هوش مصنوعی';
+      }
+    }
+
+    function startPolling(jobId) {
+      if (pollInterval) clearInterval(pollInterval);
+      pollInterval = setInterval(async () => {
+        try {
+          const headers = {};
+          if (apiToken) headers['X-API-Token'] = apiToken;
+          const res = await fetch(`/api/jobs/${jobId}`, { headers });
+          if (!res.ok) return;
+          const job = await res.json();
+          updateJobUI(job);
+          if (job.status === 'completed' || job.status === 'failed') {
+            clearInterval(pollInterval);
+            document.getElementById('start-btn').disabled = false;
+            document.getElementById('start-btn').innerHTML = '<span>شروع استخراج و تولید زیرنویس</span>';
+          }
+        } catch {}
+      }, 1500);
+    }
+
+    async function loadSubtitlesPreview(jobId) {
+      try {
+        const headers = {};
+        if (apiToken) headers['X-API-Token'] = apiToken;
+        const res = await fetch(`/api/jobs/${jobId}/subtitles`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById('srt-preview-box').innerText = data.srt_raw || 'زیرنویسی یافت نشد.';
+          document.getElementById('subtitles-card').classList.remove('hidden');
+        }
+      } catch {}
+    }
+
+    function downloadSrt() {
+      if (!currentJobId) return;
+      const tokenParam = apiToken ? `?token=${encodeURIComponent(apiToken)}` : '';
+      window.location.href = `/api/jobs/${currentJobId}/download${tokenParam}`;
+    }
+
+    function copyJobId() {
+      const text = document.getElementById('job-id-text').innerText;
+      navigator.clipboard.writeText(text);
+      alert('شناسه درخواست کپی شد.');
+    }
+
+    function copySubtitlesText() {
+      const text = document.getElementById('srt-preview-box').innerText;
+      navigator.clipboard.writeText(text);
+      alert('متن زیرنویس کپی شد.');
+    }
+
+    function openTokenModal() {
+      document.getElementById('token-input').value = apiToken;
+      document.getElementById('token-modal').classList.remove('hidden');
+      document.getElementById('token-modal').classList.add('flex');
+    }
+
+    function closeTokenModal() {
+      document.getElementById('token-modal').classList.add('hidden');
+      document.getElementById('token-modal').classList.remove('flex');
+    }
+
+    function saveToken() {
+      apiToken = document.getElementById('token-input').value.trim();
+      localStorage.setItem('whisper_api_token', apiToken);
+      closeTokenModal();
+      alert('توکن با موفقیت ذخیره شد.');
+    }
+  </script>
+</body>
+</html>

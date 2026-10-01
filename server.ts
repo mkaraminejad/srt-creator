@@ -552,6 +552,7 @@ app.get('/api/project-files', (_req, res) => {
     { key: 'compose', path: 'compose.yaml', title: 'compose.yaml', lang: 'yaml' },
     { key: 'env', path: '.env.example', title: '.env.example', lang: 'shell' },
     { key: 'main_py', path: 'backend/main.py', title: 'backend/main.py', lang: 'python' },
+    { key: 'static_index', path: 'backend/static/index.html', title: 'backend/static/index.html', lang: 'html' },
     { key: 'config_py', path: 'backend/config.py', title: 'backend/config.py', lang: 'python' },
     { key: 'storage_py', path: 'backend/services/storage.py', title: 'backend/services/storage.py', lang: 'python' },
     { key: 'audio_py', path: 'backend/services/audio.py', title: 'backend/services/audio.py', lang: 'python' },

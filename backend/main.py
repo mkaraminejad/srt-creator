@@ -23,7 +23,7 @@ from fastapi import (
     status
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import config
@@ -328,7 +328,35 @@ def delete_job(job_id: str, _: bool = Depends(verify_token)):
     return {"success": True, "message": "اطلاعات و فایل‌های این درخواست پاکسازی شدند."}
 
 
-# Mount static directory if it exists (e.g. production build)
+# Serve Web Interface at /
+static_index = Path(__file__).resolve().parent / "static" / "index.html"
+dist_index = Path(__file__).resolve().parent.parent / "dist" / "index.html"
+
+
+@app.get("/", response_class=HTMLResponse)
+def serve_root():
+    """Serves the Persian web interface directly at the root URL."""
+    if dist_index.exists():
+        return HTMLResponse(content=dist_index.read_text(encoding="utf-8"))
+    if static_index.exists():
+        return HTMLResponse(content=static_index.read_text(encoding="utf-8"))
+    return HTMLResponse("""
+    <html lang="fa" dir="rtl">
+    <head><meta charset="utf-8"><title>WhisperVideoSRT</title></head>
+    <body style="font-family:sans-serif;background:#090d16;color:#fff;text-align:center;padding:50px;">
+        <h2>سامانه تبدیل ویدیو به زیرنویس</h2>
+        <p>لطفاً برای استفاده از API به <a href="/docs" style="color:#a78bfa;">مستندات Swagger (/docs)</a> مراجعه فرمایید.</p>
+    </body>
+    </html>
+    """)
+
+
+# Mount static directory if it exists
+static_dir = Path(__file__).resolve().parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
 dist_dir = Path(__file__).resolve().parent.parent / "dist"
 if dist_dir.exists():
-    app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="frontend")
+    app.mount("/assets", StaticFiles(directory=str(dist_dir / "assets")), name="assets")
+
