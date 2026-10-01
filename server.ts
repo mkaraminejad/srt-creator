@@ -545,6 +545,155 @@ app.get('/api/jobs/:id/subtitles', verifyApiToken, (req: Request, res: Response)
   });
 });
 
+app.post('/api/jobs/:id/translate', verifyApiToken, async (req: Request, res: Response) => {
+  const job = jobsMap.get(req.params.id);
+  if (!job || !job.srt_path || !fs.existsSync(job.srt_path)) {
+    return res.status(404).json({ error: 'فایل زیرنویس اولیه برای ترجمه یافت نشد.' });
+  }
+
+  const targetLang = (req.body.target_language || 'fa').toString().toLowerCase();
+  const langName =
+    targetLang === 'fa'
+      ? 'Persian (Farsi)'
+      : targetLang === 'en'
+      ? 'English'
+      : targetLang === 'ar'
+      ? 'Arabic'
+      : targetLang === 'fr'
+      ? 'French'
+      : targetLang === 'de'
+      ? 'German'
+      : 'Persian (Farsi)';
+
+  try {
+    const srtContent = fs.readFileSync(job.srt_path, 'utf-8');
+    const blocks = srtContent.trim().split(/\n\s*\n/);
+    const segmentsToTranslate: Array<{ id: number; startTime: string; endTime: string; text: string }> = [];
+
+    for (const block of blocks) {
+      const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (lines.length >= 3 && lines[1].includes('-->')) {
+        const [startStr, endStr] = lines[1].split('-->').map((s) => s.trim());
+        segmentsToTranslate.push({
+          id: parseInt(lines[0], 10) || segmentsToTranslate.length + 1,
+          startTime: startStr,
+          endTime: endStr,
+          text: lines.slice(2).join(' '),
+        });
+      }
+    }
+
+    if (segmentsToTranslate.length === 0) {
+      return res.status(400).json({ error: 'زیرنویس خالی است یا متنی برای ترجمه وجود ندارد.' });
+    }
+
+    // Call Gemini to translate segments into target language
+    const prompt = `You are a professional subtitle translator and localizer.
+Translate the text of the following subtitle segments into fluent, natural, and accurate ${langName}.
+
+CRITICAL REQUIREMENTS:
+1. Maintain the EXACT SAME segment id, startTime, and endTime for every segment. Do NOT change or recalculate timestamps.
+2. Translate the "text" field into idiomatic, natural ${langName}.
+3. For Persian (Farsi), use proper Persian characters, correct right-to-left natural syntax, and fluent subtitle phrasing.
+4. Return an array of JSON objects matching the schema.
+
+Input segments:
+${JSON.stringify(segmentsToTranslate)}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-flash-lite',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.INTEGER },
+              startTime: { type: Type.STRING },
+              endTime: { type: Type.STRING },
+              text: { type: Type.STRING },
+            },
+            required: ['id', 'startTime', 'endTime', 'text'],
+          },
+        },
+      },
+    });
+
+    const parsedJson = JSON.parse(response.text?.trim() || '[]');
+    let translatedSrt = '';
+    const toSec = (ts: string) => {
+      try {
+        const [h, m, rest] = ts.split(':');
+        const [s, ms] = rest.split(',');
+        return parseInt(h) * 3600 + parseInt(m) * 60 + parseInt(s) + parseInt(ms) / 1000;
+      } catch {
+        return 0;
+      }
+    };
+
+    const finalSegments = (parsedJson.length > 0 ? parsedJson : segmentsToTranslate).map(
+      (seg: any, idx: number) => {
+        const orig = segmentsToTranslate[idx] || seg;
+        const s = toSec(orig.startTime);
+        const e = toSec(orig.endTime);
+        return {
+          id: idx + 1,
+          startTime: orig.startTime,
+          endTime: orig.endTime,
+          start: s,
+          end: e,
+          text: String(seg.text || orig.text).trim(),
+        };
+      }
+    );
+
+    for (const seg of finalSegments) {
+      translatedSrt += `${seg.id}\n${seg.startTime} --> ${seg.endTime}\n${seg.text}\n\n`;
+    }
+
+    const jobDir = path.dirname(job.srt_path);
+    const translatedPath = path.join(jobDir, `subtitles_translated_${targetLang}.srt`);
+    fs.writeFileSync(translatedPath, translatedSrt.trim() + '\n', 'utf-8');
+
+    res.json({
+      success: true,
+      job_id: job.id,
+      target_language: targetLang,
+      translated_srt: translatedSrt,
+      segments: finalSegments,
+      count: finalSegments.length,
+    });
+  } catch (err: any) {
+    console.error('Translation error:', err);
+    res.status(500).json({ error: 'خطا در ترجمه زیرنویس: ' + (err.message || 'خطای سرور') });
+  }
+});
+
+app.get('/api/jobs/:id/download-translated', verifyApiToken, (req: Request, res: Response) => {
+  const job = jobsMap.get(req.params.id);
+  if (!job || !job.srt_path) {
+    return res.status(404).json({ error: 'درخواست یافت نشد.' });
+  }
+
+  const targetLang = (req.query.lang || 'fa').toString().toLowerCase();
+  const jobDir = path.dirname(job.srt_path);
+  let translatedPath = path.join(jobDir, `subtitles_translated_${targetLang}.srt`);
+
+  if (!fs.existsSync(translatedPath)) {
+    translatedPath = job.srt_path;
+  }
+
+  const baseName = path.parse(job.original_filename).name;
+  const downloadName = `${baseName}_${targetLang}_translated.srt`;
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(downloadName)}"`);
+  const srtContent = fs.readFileSync(translatedPath, 'utf-8');
+  res.send(srtContent);
+});
+
 // Provide project files content so user can view/copy all Docker, Python and config files
 app.get('/api/project-files', (_req, res) => {
   const filePaths = [

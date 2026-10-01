@@ -164,6 +164,16 @@ curl http://localhost:8000/api/jobs/8kL_9pA1xQmZbV_04uYw72Te
 curl -O -J http://localhost:8000/api/jobs/8kL_9pA1xQmZbV_04uYw72Te/download
 ```
 
+۵. **ترجمه هوشمند زیرنویس به فارسی یا سایر زبان‌ها (Subtitle Translation):**
+```bash
+# درخواست ترجمه بندهای زیرنویس با حفظ تایم‌استمپ‌ها
+curl -X POST http://localhost:8000/api/jobs/8kL_9pA1xQmZbV_04uYw72Te/translate \
+  -F "target_language=fa"
+
+# دانلود فایل زیرنویس ترجمه‌شده با انکودینگ UTF-8
+curl -O -J "http://localhost:8000/api/jobs/8kL_9pA1xQmZbV_04uYw72Te/download-translated?lang=fa"
+```
+
 ---
 
 ## ⚙️ متغیرهای محیطی (Environment Variables)

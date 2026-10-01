@@ -314,6 +314,70 @@ def get_job_subtitles(job_id: str, _: bool = Depends(verify_token)):
     }
 
 
+@app.post("/api/jobs/{job_id}/translate")
+def translate_job_subtitles(
+    job_id: str,
+    target_language: str = Form("fa"),
+    _: bool = Depends(verify_token)
+):
+    """
+    Translates an existing SRT subtitle into the requested target language (e.g., Persian 'fa'),
+    preserving identical start and end timestamps.
+    """
+    storage = get_storage()
+    srt_text = storage.read_text(job_id, "subtitles.srt")
+    if not srt_text:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="فایل زیرنویس اولیه یافت نشد.")
+
+    from backend.services.translator import translate_srt_text
+    translated_srt = translate_srt_text(srt_text, target_lang=target_language)
+    translated_filename = f"subtitles_translated_{target_language}.srt"
+    storage.save_text(job_id, translated_filename, translated_srt, encoding="utf-8")
+
+    parsed = parse_srt(translated_srt)
+    return {
+        "success": True,
+        "job_id": job_id,
+        "target_language": target_language,
+        "translated_srt": translated_srt,
+        "segments": parsed,
+        "count": len(parsed)
+    }
+
+
+@app.get("/api/jobs/{job_id}/download-translated")
+def download_translated_srt(
+    job_id: str,
+    target_language: str = Query("fa"),
+    _: bool = Depends(verify_token)
+):
+    """
+    Downloads the translated SRT file in UTF-8 format.
+    """
+    storage = get_storage()
+    translated_filename = f"subtitles_translated_{target_language}.srt"
+    srt_path = storage.get_file_path(job_id, translated_filename)
+    if not srt_path or not srt_path.exists():
+        # Fallback to default if not yet translated
+        srt_path = storage.get_file_path(job_id, "subtitles.srt")
+        if not srt_path or not srt_path.exists():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="فایل زیرنویس ترجمه‌شده یافت نشد.")
+
+    job_manager = get_job_manager()
+    job = job_manager.get_job(job_id)
+    original_stem = Path(job.get("original_filename", "subtitles") if job else "subtitles").stem
+    safe_name = f"{original_stem}_{target_language}_translated.srt"
+
+    return FileResponse(
+        path=str(srt_path),
+        media_type="text/plain; charset=utf-8",
+        filename=safe_name,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}"; filename*=UTF-8\'\'{safe_name}'
+        }
+    )
+
+
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str, _: bool = Depends(verify_token)):
     """

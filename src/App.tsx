@@ -22,7 +22,8 @@ import {
   Search,
   ExternalLink,
   Info,
-  Server
+  Server,
+  Globe
 } from 'lucide-react';
 
 interface JobData {
@@ -107,6 +108,13 @@ export default function App() {
   const [activeSegmentId, setActiveSegmentId] = useState<string | number | null>(null);
   const [copiedSrt, setCopiedSrt] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Subtitle Translation State
+  const [translatedSubtitles, setTranslatedSubtitles] = useState<SubtitleSegment[]>([]);
+  const [rawTranslatedSrt, setRawTranslatedSrt] = useState<string>('');
+  const [targetLanguage, setTargetLanguage] = useState<string>('fa');
+  const [isTranslating, setIsTranslating] = useState<boolean>(false);
+  const [activeSubtitleView, setActiveSubtitleView] = useState<'original' | 'translated'>('original');
 
   // Docker & Code Files State
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
@@ -294,6 +302,49 @@ export default function App() {
     document.body.removeChild(a);
   };
 
+  // Translate subtitles to target language
+  const handleTranslateSubtitles = async (lang = targetLanguage) => {
+    if (!currentJob) return;
+    setIsTranslating(true);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiToken) headers['X-API-Token'] = apiToken;
+
+      const res = await fetch(`/api/jobs/${currentJob.job_id}/translate`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ target_language: lang })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'خطا در ترجمه زیرنویس' }));
+        throw new Error(errData.error || errData.detail || 'خطا در ترجمه');
+      }
+
+      const data = await res.json();
+      setTranslatedSubtitles(data.segments || []);
+      setRawTranslatedSrt(data.translated_srt || '');
+      setActiveSubtitleView('translated');
+    } catch (e: any) {
+      alert(e.message || 'خطا در ترجمه زیرنویس');
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  // Download Translated SRT file
+  const handleDownloadTranslatedSrt = (jobId: string, filename: string, lang = targetLanguage) => {
+    const tokenQuery = apiToken ? `&token=${encodeURIComponent(apiToken)}` : '';
+    const downloadUrl = `/api/jobs/${jobId}/download-translated?lang=${encodeURIComponent(lang)}${tokenQuery}`;
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    const baseName = filename.replace(/\.[^/.]+$/, '');
+    a.download = `${baseName}_${lang}_translated.srt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   // Fetch project files for Docker & code inspector
   useEffect(() => {
     if (activeTab === 'docker' && projectFiles.length === 0) {
@@ -316,7 +367,8 @@ export default function App() {
     const time = videoRef.current.currentTime;
     setCurrentTime(time);
 
-    const active = subtitles.find((s) => time >= s.start && time <= s.end);
+    const activeList = activeSubtitleView === 'translated' && translatedSubtitles.length > 0 ? translatedSubtitles : subtitles;
+    const active = activeList.find((s) => time >= s.start && time <= s.end);
     setActiveSegmentId(active ? active.id : null);
   };
 
@@ -776,8 +828,67 @@ export default function App() {
                         className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-emerald-600/20"
                       >
                         <Download className="w-4 h-4" />
-                        <span>دانلود مستقیم زیرنویس (UTF-8 SRT)</span>
+                        <span>دانلود زیرنویس اصلی (UTF-8 SRT)</span>
                       </button>
+
+                      {/* AI Subtitle Translation Card */}
+                      <div className="p-3.5 rounded-xl bg-violet-950/30 border border-violet-500/30 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-violet-300 flex items-center gap-1.5">
+                            <Globe className="w-4 h-4 text-violet-400" />
+                            ترجمه هوشمند زیرنویس (AI Translation)
+                          </span>
+                          {translatedSubtitles.length > 0 && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-medium">
+                              زیرنویس فارسی آماده است
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={targetLanguage}
+                            onChange={(e) => setTargetLanguage(e.target.value)}
+                            className="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-violet-500 flex-1"
+                          >
+                            <option value="fa">فارسی (Persian / Farsi)</option>
+                            <option value="en">انگلیسی (English)</option>
+                            <option value="ar">عربی (Arabic)</option>
+                            <option value="fr">فرانسوی (French)</option>
+                            <option value="de">آلمانی (German)</option>
+                          </select>
+
+                          <button
+                            onClick={() => handleTranslateSubtitles()}
+                            disabled={isTranslating}
+                            className="px-3.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-violet-600/30 disabled:opacity-50 transition"
+                          >
+                            {isTranslating ? (
+                              <>
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                <span>در حال ترجمه...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3.5 h-3.5" />
+                                <span>ترجمه به فارسی</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        {translatedSubtitles.length > 0 && (
+                          <div className="pt-2 border-t border-violet-500/20 flex flex-col sm:flex-row items-center gap-2">
+                            <button
+                              onClick={() => handleDownloadTranslatedSrt(currentJob.job_id, currentJob.original_filename, targetLanguage)}
+                              className="w-full py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                              <span>دانلود زیرنویس ترجمه‌شده فارسی (.srt)</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
 
                       <button
                         onClick={() => {
@@ -861,24 +972,68 @@ export default function App() {
                 </p>
               </div>
 
-              {currentJob && (
-                <div className="flex items-center gap-2 w-full sm:w-auto">
-                  <button
-                    onClick={() => handleDownloadSrt(currentJob.job_id, currentJob.original_filename)}
-                    className="flex-1 sm:flex-none px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-md transition-all"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>دانلود SRT</span>
-                  </button>
-                  <button
-                    onClick={() => copyToClipboard(rawSrt, setCopiedSrt)}
-                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs flex items-center gap-1.5 border border-slate-700 transition-all"
-                  >
-                    {copiedSrt ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                    <span>کپی کل متن</span>
-                  </button>
-                </div>
-              )}
+              {/* Subtitle Track Selector and Download Actions */}
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                {translatedSubtitles.length > 0 && (
+                  <div className="flex items-center gap-1 p-1 bg-slate-950 rounded-xl border border-slate-800">
+                    <button
+                      onClick={() => setActiveSubtitleView('original')}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                        activeSubtitleView === 'original'
+                          ? 'bg-violet-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      زیرنویس اصلی ({subtitles.length})
+                    </button>
+                    <button
+                      onClick={() => setActiveSubtitleView('translated')}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
+                        activeSubtitleView === 'translated'
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      زیرنویس فارسی ترجمه‌شده ({translatedSubtitles.length})
+                    </button>
+                  </div>
+                )}
+
+                {currentJob && (
+                  <div className="flex items-center gap-2">
+                    {activeSubtitleView === 'translated' && translatedSubtitles.length > 0 ? (
+                      <button
+                        onClick={() => handleDownloadTranslatedSrt(currentJob.job_id, currentJob.original_filename, targetLanguage)}
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-all"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>دانلود فارسی (.srt)</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleDownloadSrt(currentJob.job_id, currentJob.original_filename)}
+                        className="px-3.5 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md transition-all"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>دانلود SRT</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() =>
+                        copyToClipboard(
+                          activeSubtitleView === 'translated' && rawTranslatedSrt ? rawTranslatedSrt : rawSrt,
+                          setCopiedSrt
+                        )
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs flex items-center gap-1.5 border border-slate-700 transition-all"
+                    >
+                      {copiedSrt ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                      <span>کپی متن</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -900,7 +1055,10 @@ export default function App() {
                       {activeSegmentId && (
                         <div className="absolute bottom-12 inset-x-4 pointer-events-none flex justify-center">
                           <div className="bg-black/85 text-amber-300 px-4 py-2 rounded-xl text-sm sm:text-base font-medium shadow-2xl backdrop-blur-sm max-w-lg text-center border border-amber-500/20">
-                            {subtitles.find((s) => s.id === activeSegmentId)?.text}
+                            {(activeSubtitleView === 'translated' && translatedSubtitles.length > 0
+                              ? translatedSubtitles
+                              : subtitles
+                            ).find((s) => s.id === activeSegmentId)?.text}
                           </div>
                         </div>
                       )}
@@ -922,8 +1080,13 @@ export default function App() {
                       {String(Math.floor(currentTime % 60)).padStart(2, '0')}.
                       {String(Math.floor((currentTime % 1) * 1000)).padStart(3, '0')}
                     </span>
-                    <span>
-                      {subtitles.length} بند زیرنویس شناسایی شد
+                    <span className="flex items-center gap-1.5 font-medium">
+                      <span>ترک فعال:</span>
+                      <span className="text-amber-300">
+                        {activeSubtitleView === 'translated' && translatedSubtitles.length > 0
+                          ? 'زیرنویس ترجمه‌شده فارسی'
+                          : 'زیرنویس اصلی'}
+                      </span>
                     </span>
                   </div>
                 </div>
@@ -931,16 +1094,28 @@ export default function App() {
                 {/* Subtitle Raw Text View Accordion */}
                 <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-slate-300">محتوای متنی فایل SRT (UTF-8):</span>
+                    <span className="text-xs font-bold text-slate-300">
+                      محتوای متنی فایل SRT (
+                      {activeSubtitleView === 'translated' && translatedSubtitles.length > 0
+                        ? 'ترجمه‌شده فارسی UTF-8'
+                        : 'زیرنویس اصلی UTF-8'}
+                      ):
+                    </span>
                     <button
-                      onClick={() => copyToClipboard(rawSrt, setCopiedSrt)}
+                      onClick={() =>
+                        copyToClipboard(
+                          activeSubtitleView === 'translated' && rawTranslatedSrt ? rawTranslatedSrt : rawSrt,
+                          setCopiedSrt
+                        )
+                      }
                       className="text-xs text-violet-400 hover:underline flex items-center gap-1"
                     >
                       {copiedSrt ? 'کپی شد!' : 'کپی محتوا'}
                     </button>
                   </div>
                   <pre className="bg-slate-950 p-3 rounded-xl text-xs font-mono text-slate-300 max-h-48 overflow-y-auto border border-slate-800/80 select-all leading-relaxed dir-ltr text-left">
-                    {rawSrt || 'هیچ زیرنویسی هنوز لود نشده است.'}
+                    {(activeSubtitleView === 'translated' && rawTranslatedSrt ? rawTranslatedSrt : rawSrt) ||
+                      'هیچ زیرنویسی هنوز لود نشده است.'}
                   </pre>
                 </div>
               </div>
@@ -962,7 +1137,10 @@ export default function App() {
 
                   {/* Segments Scroll Area */}
                   <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
-                    {subtitles
+                    {(activeSubtitleView === 'translated' && translatedSubtitles.length > 0
+                      ? translatedSubtitles
+                      : subtitles
+                    )
                       .filter((seg) => !searchQuery || seg.text.toLowerCase().includes(searchQuery.toLowerCase()))
                       .map((seg) => {
                         const isActive = activeSegmentId === seg.id;
@@ -982,14 +1160,15 @@ export default function App() {
                                 {seg.startTime} ➔ {seg.endTime}
                               </span>
                             </div>
-                            <p className="text-sm text-slate-200 leading-relaxed font-medium">
-                              {seg.text}
-                            </p>
+                            <p className="text-sm text-slate-200 leading-relaxed font-medium">{seg.text}</p>
                           </div>
                         );
                       })}
 
-                    {subtitles.length === 0 && (
+                    {(activeSubtitleView === 'translated' && translatedSubtitles.length > 0
+                      ? translatedSubtitles
+                      : subtitles
+                    ).length === 0 && (
                       <div className="h-full flex flex-col items-center justify-center text-center text-slate-500">
                         <FileText className="w-10 h-10 text-slate-700 mb-2" />
                         <p className="text-sm font-semibold text-slate-400">زیرنویسی در دسترس نیست</p>
