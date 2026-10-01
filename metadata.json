@@ -1,0 +1,6 @@
+{
+  "name": "WhisperVideoSRT - سامانه تبدیل ویدیو به زیرنویس",
+  "description": "سامانه تولید خودکار زیرنویس فارسی و انگلیسی از ویدیوهای MP4، MKV و MOV با هوش مصنوعی faster-whisper و FFmpeg",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,49 @@
+# ==============================================================
+# WhisperVideoSRT - Docker Compose Configuration
+# Preserves downloaded AI models in a persistent named volume.
+# ==============================================================
+
+services:
+  whisper-srt-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whisper-video-srt
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - UPLOAD_MAX_MB=${UPLOAD_MAX_MB:-500}
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - DEVICE=cpu
+      - COMPUTE_TYPE=int8
+      - CPU_THREADS=${CPU_THREADS:-4}
+      - API_ACCESS_TOKEN=${API_ACCESS_TOKEN:-}
+      - STORAGE_DIR=/data/storage
+      - MODEL_CACHE_DIR=/root/.cache/huggingface
+      - TEMP_FILE_RETENTION_HOURS=${TEMP_FILE_RETENTION_HOURS:-24}
+      - CLEANUP_INTERVAL_MINUTES=${CLEANUP_INTERVAL_MINUTES:-30}
+    volumes:
+      # Named volume for caching the Whisper models across container restarts:
+      - whisper_models:/root/.cache/huggingface
+      # Named volume for persistent job files, uploaded videos, and generated SRT files:
+      - whisper_storage:/data/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  whisper_models:
+    name: whisper_models_cache
+    driver: local
+  whisper_storage:
+    name: whisper_storage_data
+    driver: local

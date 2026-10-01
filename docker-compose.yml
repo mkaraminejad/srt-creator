@@ -1,0 +1,11 @@
+# Compatibility link to compose.yaml
+services:
+  whisper-srt-app:
+    extends:
+      file: compose.yaml
+      service: whisper-srt-app
+volumes:
+  whisper_models:
+    name: whisper_models_cache
+  whisper_storage:
+    name: whisper_storage_data
