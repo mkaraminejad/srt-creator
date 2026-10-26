@@ -174,6 +174,17 @@ curl -X POST http://localhost:8000/api/jobs/8kL_9pA1xQmZbV_04uYw72Te/translate \
 curl -O -J "http://localhost:8000/api/jobs/8kL_9pA1xQmZbV_04uYw72Te/download-translated?lang=fa"
 ```
 
+۶. **رونویسی فقط بازه مشخصی از ویدیو (از دقیقه فلان تا فلان):**
+```bash
+# رونویسی ویدیو مثلاً از دقیقه 02:30 تا 08:15 با حفظ همگام‌سازی تایم‌استمپ‌ها
+curl -X POST http://localhost:8000/api/jobs/upload \
+  -F "file=@podcast.mp4" \
+  -F "language=fa" \
+  -F "start_time=02:30" \
+  -F "end_time=08:15" \
+  -F "offset_timestamps=true"
+```
+
 ---
 
 ## ⚙️ متغیرهای محیطی (Environment Variables)

@@ -75,7 +75,7 @@ export default function App() {
     supported_models: string[];
     auth_required: boolean;
   }>({
-    upload_max_mb: 500,
+    upload_max_mb: 2000,
     allowed_extensions: ['mp4', 'mkv', 'mov'],
     default_model: 'base',
     supported_models: ['tiny', 'base', 'small', 'medium', 'large-v3'],
@@ -89,6 +89,12 @@ export default function App() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+
+  // Time Range Selection State
+  const [enableTimeRange, setEnableTimeRange] = useState(false);
+  const [startTimeInput, setStartTimeInput] = useState('');
+  const [endTimeInput, setEndTimeInput] = useState('');
+  const [offsetTimestamps, setOffsetTimestamps] = useState(true);
 
   // Active Job State
   const [currentJob, setCurrentJob] = useState<JobData | null>(() => {
@@ -183,6 +189,12 @@ export default function App() {
     formData.append('file', selectedFile);
     formData.append('language', selectedLanguage);
     formData.append('model', selectedModel);
+
+    if (enableTimeRange) {
+      if (startTimeInput.trim()) formData.append('start_time', startTimeInput.trim());
+      if (endTimeInput.trim()) formData.append('end_time', endTimeInput.trim());
+      formData.append('offset_timestamps', String(offsetTimestamps));
+    }
 
     try {
       const headers: Record<string, string> = {};
@@ -680,6 +692,66 @@ export default function App() {
                       مدل‌ها در ولوم اختصاصی داکر ذخیره می‌شوند.
                     </p>
                   </div>
+                </div>
+
+                {/* Time Range Trimming (From Minute X to Minute Y) */}
+                <div className="mt-5 pt-4 border-t border-slate-800/80 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-200 flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enableTimeRange}
+                        onChange={(e) => setEnableTimeRange(e.target.checked)}
+                        className="w-4 h-4 rounded text-violet-600 bg-slate-950 border-slate-700 focus:ring-violet-500 cursor-pointer"
+                      />
+                      <span>⏱️ رونویسی فقط بخشی از ویدیو (برش از دقیقه فلان تا فلان)</span>
+                    </label>
+                    <span className="text-[11px] text-amber-400 font-medium">افزایش چشمگیر سرعت</span>
+                  </div>
+
+                  {enableTimeRange && (
+                    <div className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                            از زمان (دقیقه:ثانیه یا ساعت:دقیقه:ثانیه)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="مثال: 01:30 یا 00:01:30"
+                            value={startTimeInput}
+                            onChange={(e) => setStartTimeInput(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-violet-500 text-left dir-ltr"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+                            تا زمان (دقیقه:ثانیه یا ساعت:دقیقه:ثانیه)
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="مثال: 05:45 یا 00:05:45"
+                            value={endTimeInput}
+                            onChange={(e) => setEndTimeInput(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-violet-500 text-left dir-ltr"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-[11px] text-slate-400">
+                        <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={offsetTimestamps}
+                            onChange={(e) => setOffsetTimestamps(e.target.checked)}
+                            className="w-3.5 h-3.5 rounded text-violet-600 bg-slate-950 border-slate-700 cursor-pointer"
+                          />
+                          <span>تایم‌استمپ‌های زیرنویس با زمان واقعی ویدیوی اصلی هماهنگ باشد</span>
+                        </label>
+                        <span className="text-[10px] text-slate-500 font-mono">فرمت: mm:ss یا hh:mm:ss</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Submit Button */}

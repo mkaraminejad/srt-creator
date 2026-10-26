@@ -134,10 +134,14 @@ async def upload_video(
     file: UploadFile = File(...),
     language: str = Form("auto"),
     model: Optional[str] = Form(None),
+    start_time: Optional[str] = Form(None),
+    end_time: Optional[str] = Form(None),
+    offset_timestamps: bool = Form(True),
     _: bool = Depends(verify_token)
 ):
     """
     Upload an MP4, MKV, or MOV video file to begin asynchronous transcription.
+    Optionally accepts start_time and end_time (e.g. '01:30' to '05:00') to transcribe a specific window.
     Returns immediately with a unique job ID without blocking the connection.
     """
     original_filename = file.filename or "uploaded_video.mp4"
@@ -160,13 +164,22 @@ async def upload_video(
     storage = get_storage()
     job_manager = get_job_manager()
 
+    # Clean time range
+    clean_start = start_time.strip() if start_time and start_time.strip() else None
+    clean_end = end_time.strip() if end_time and end_time.strip() else None
+
     # 3. Create job and save file stream while validating size
-    # Create preliminary job ID
     dummy_job_id = job_manager.create_job(
         original_filename=original_filename,
         file_size=0,
         language=clean_lang,
         model=chosen_model
+    )
+    job_manager.update_job(
+        dummy_job_id,
+        start_time=clean_start,
+        end_time=clean_end,
+        offset_timestamps=offset_timestamps
     )
 
     try:

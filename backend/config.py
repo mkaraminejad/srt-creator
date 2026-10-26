@@ -21,7 +21,7 @@ PORT: int = int(os.getenv("PORT", "8000"))
 API_ACCESS_TOKEN: Optional[str] = os.getenv("API_ACCESS_TOKEN", None)
 
 # Upload & File Constraints
-UPLOAD_MAX_MB: int = int(os.getenv("UPLOAD_MAX_MB", "500"))
+UPLOAD_MAX_MB: int = int(os.getenv("UPLOAD_MAX_MB", "2000"))
 UPLOAD_MAX_BYTES: int = UPLOAD_MAX_MB * 1024 * 1024
 ALLOWED_EXTENSIONS: Set[str] = {"mp4", "mkv", "mov"}
 

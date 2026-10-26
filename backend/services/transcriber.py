@@ -61,7 +61,8 @@ def transcribe_audio_file(
     language_code: Optional[str] = None,
     model_name: Optional[str] = None,
     total_duration: float = 0.0,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    time_offset: float = 0.0
 ) -> Tuple[str, List[Dict[str, Any]], str, float]:
     """
     Transcribes the specified audio file.
@@ -111,8 +112,8 @@ def transcribe_audio_file(
     for seg in segments_generator:
         seg_dict = {
             "id": seg.id,
-            "start": round(seg.start, 3),
-            "end": round(seg.end, 3),
+            "start": round(seg.start + time_offset, 3),
+            "end": round(seg.end + time_offset, 3),
             "text": seg.text.strip(),
             "avg_logprob": round(seg.avg_logprob, 3),
             "no_speech_prob": round(seg.no_speech_prob, 3)

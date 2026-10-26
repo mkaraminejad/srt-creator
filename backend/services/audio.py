@@ -40,14 +40,42 @@ def probe_media_duration(video_path: Path) -> float:
     return 0.0
 
 
-def extract_audio_for_whisper(video_path: Path, output_wav_path: Path) -> float:
+def parse_time_str(time_val: Optional[str]) -> Optional[float]:
     """
-    Extracts audio from video_path and converts it to:
+    Parses '05:30', '01:20:15', '90', or '90.5' into seconds (float).
+    """
+    if not time_val:
+        return None
+    val = str(time_val).strip()
+    if not val:
+        return None
+    parts = val.split(":")
+    try:
+        if len(parts) == 1:
+            return max(0.0, float(parts[0]))
+        elif len(parts) == 2:
+            return max(0.0, int(parts[0]) * 60 + float(parts[1]))
+        elif len(parts) == 3:
+            return max(0.0, int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2]))
+    except ValueError:
+        return None
+    return None
+
+
+def extract_audio_for_whisper(
+    video_path: Path,
+    output_wav_path: Path,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None
+) -> Tuple[float, float]:
+    """
+    Extracts audio from video_path (optionally trimmed by start_time and end_time) and converts it to:
     - Format: WAV (pcm_s16le)
     - Sample rate: 16000 Hz (Whisper standard)
     - Channels: 1 (Mono)
 
-    Returns the duration of the audio in seconds.
+    Returns:
+    - Tuple: (duration_in_seconds, start_offset_seconds)
     """
     if not video_path.exists():
         raise AudioProcessingError(f"فایل ویدیو یافت نشد: {video_path}")
@@ -55,23 +83,24 @@ def extract_audio_for_whisper(video_path: Path, output_wav_path: Path) -> float:
     # Make sure output directory exists
     output_wav_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # FFmpeg command:
-    # -y: overwrite output
-    # -i <input>: input video
-    # -vn: disable video recording (extract audio only)
-    # -acodec pcm_s16le: uncompressed 16-bit linear PCM
-    # -ar 16000: 16kHz sample rate
-    # -ac 1: mono channel
-    cmd = [
-        "ffmpeg",
-        "-y",
+    start_sec = parse_time_str(start_time) or 0.0
+    end_sec = parse_time_str(end_time)
+
+    # Build FFmpeg command with fast seeking if range requested
+    cmd = ["ffmpeg", "-y"]
+    if start_sec > 0:
+        cmd.extend(["-ss", str(start_sec)])
+    if end_sec is not None and end_sec > start_sec:
+        cmd.extend(["-to", str(end_sec)])
+
+    cmd.extend([
         "-i", str(video_path),
         "-vn",
         "-acodec", "pcm_s16le",
         "-ar", "16000",
         "-ac", "1",
         str(output_wav_path)
-    ]
+    ])
 
     logger.info(f"Extracting audio using FFmpeg: {' '.join(cmd)}")
     try:
@@ -101,5 +130,5 @@ def extract_audio_for_whisper(video_path: Path, output_wav_path: Path) -> float:
     duration = probe_media_duration(output_wav_path)
     if duration <= 0:
         duration = probe_media_duration(video_path)
-    logger.info(f"Audio extracted successfully to {output_wav_path}, duration: {duration:.2f}s")
-    return duration
+    logger.info(f"Audio extracted successfully to {output_wav_path}, duration: {duration:.2f}s, start_offset: {start_sec:.2f}s")
+    return duration, start_sec

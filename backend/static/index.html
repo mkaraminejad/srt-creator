@@ -132,6 +132,37 @@
             </div>
           </div>
 
+          <!-- Time Range Trimming -->
+          <div class="mt-5 pt-4 border-t border-slate-800 space-y-3">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-bold text-slate-200 flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="range-enable-checkbox" onchange="toggleTimeRange(this.checked)" class="w-4 h-4 rounded text-violet-600 bg-slate-950 border-slate-700 cursor-pointer">
+                <span>⏱️ رونویسی فقط بخشی از ویدیو (برش از دقیقه فلان تا فلان)</span>
+              </label>
+              <span class="text-[11px] text-amber-400 font-medium">افزایش سرعت</span>
+            </div>
+
+            <div id="time-range-box" class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3 hidden">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-[11px] font-semibold text-slate-300 mb-1">از زمان (دقیقه:ثانیه)</label>
+                  <input type="text" id="start-time-input" placeholder="مثال: 01:30" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono text-left dir-ltr">
+                </div>
+                <div>
+                  <label class="block text-[11px] font-semibold text-slate-300 mb-1">تا زمان (دقیقه:ثانیه)</label>
+                  <input type="text" id="end-time-input" placeholder="مثال: 05:45" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white font-mono text-left dir-ltr">
+                </div>
+              </div>
+              <div class="flex items-center justify-between pt-1 text-[11px] text-slate-400">
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                  <input type="checkbox" id="offset-timestamps-checkbox" checked class="w-3.5 h-3.5 rounded text-violet-600 bg-slate-950 border-slate-700 cursor-pointer">
+                  <span>تایم‌استمپ‌های زیرنویس با زمان واقعی ویدیوی اصلی هماهنگ باشد</span>
+                </label>
+                <span class="text-[10px] text-slate-500 font-mono">mm:ss یا hh:mm:ss</span>
+              </div>
+            </div>
+          </div>
+
           <!-- Submit Button -->
           <div class="mt-6">
             <button id="start-btn" disabled onclick="startUpload()" class="w-full py-3 px-6 rounded-xl font-bold text-sm sm:text-base flex items-center justify-center gap-2 transition bg-slate-800 text-slate-500 cursor-not-allowed">
@@ -254,12 +285,16 @@
     let pollInterval = null;
     let apiToken = localStorage.getItem('whisper_api_token') || '';
 
+    let serverMaxMb = 2000;
+
     // Initialize config
     fetch('/api/config')
       .then(r => r.json())
       .then(cfg => {
         if (cfg.upload_max_mb) {
-          document.getElementById('max-size-hint').innerText = `حداکثر حجم مجاز: ${cfg.upload_max_mb} مگابایت`;
+          serverMaxMb = cfg.upload_max_mb;
+          const gbText = cfg.upload_max_mb >= 1000 ? ` (${(cfg.upload_max_mb/1024).toFixed(1)}GB)` : '';
+          document.getElementById('max-size-hint').innerText = `حداکثر حجم مجاز: ${cfg.upload_max_mb} مگابایت${gbText}`;
         }
       }).catch(() => {});
 
@@ -271,6 +306,12 @@
       const ext = file.name.split('.').pop().toLowerCase();
       if (!['mp4', 'mkv', 'mov'].includes(ext)) {
         errBox.innerText = 'فرمت فایل مجاز نیست. فقط فرمت‌های mp4، mkv و mov مجاز می‌باشند.';
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      if (file.size > serverMaxMb * 1024 * 1024) {
+        errBox.innerText = `حجم فایل انتخاب شده (${(file.size / (1024 * 1024)).toFixed(1)} مگابایت) بیشتر از سقف مجاز سرور (${serverMaxMb} مگابایت) است.`;
         errBox.classList.remove('hidden');
         return;
       }
@@ -310,6 +351,14 @@
       formData.append('file', selectedFile);
       formData.append('language', document.getElementById('language-select').value);
       formData.append('model', document.getElementById('model-select').value);
+
+      if (document.getElementById('range-enable-checkbox').checked) {
+        const sTime = document.getElementById('start-time-input').value.trim();
+        const eTime = document.getElementById('end-time-input').value.trim();
+        if (sTime) formData.append('start_time', sTime);
+        if (eTime) formData.append('end_time', eTime);
+        formData.append('offset_timestamps', document.getElementById('offset-timestamps-checkbox').checked);
+      }
 
       const headers = {};
       if (apiToken) headers['X-API-Token'] = apiToken;
@@ -484,6 +533,15 @@
       localStorage.setItem('whisper_api_token', apiToken);
       closeTokenModal();
       alert('توکن با موفقیت ذخیره شد.');
+    }
+
+    function toggleTimeRange(enabled) {
+      const box = document.getElementById('time-range-box');
+      if (enabled) {
+        box.classList.remove('hidden');
+      } else {
+        box.classList.add('hidden');
+      }
     }
   </script>
 </body>

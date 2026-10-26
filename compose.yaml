@@ -18,7 +18,7 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=8000
-      - UPLOAD_MAX_MB=${UPLOAD_MAX_MB:-500}
+      - UPLOAD_MAX_MB=${UPLOAD_MAX_MB:-2000}
       - WHISPER_MODEL=${WHISPER_MODEL:-base}
       - DEVICE=cpu
       - COMPUTE_TYPE=int8

@@ -27,7 +27,7 @@ const ai = new GoogleGenAI({
 });
 
 // Config from env
-const UPLOAD_MAX_MB = parseInt(process.env.UPLOAD_MAX_MB || '500', 10);
+const UPLOAD_MAX_MB = parseInt(process.env.UPLOAD_MAX_MB || '2000', 10);
 const UPLOAD_MAX_BYTES = UPLOAD_MAX_MB * 1024 * 1024;
 const API_ACCESS_TOKEN = process.env.API_ACCESS_TOKEN || '';
 const STORAGE_DIR = path.resolve(__dirname, 'storage');
@@ -273,13 +273,29 @@ Return ONLY a JSON array of segment objects adhering to the required schema.`;
   throw lastError || new Error('خطا در ارتباط با سرویس هوش مصنوعی.');
 }
 
+function parseTimeString(timeStr?: string): number {
+  if (!timeStr) return 0;
+  const s = String(timeStr).trim();
+  if (!s) return 0;
+  const parts = s.split(':').map(Number);
+  if (parts.length === 1 && !isNaN(parts[0])) return Math.max(0, parts[0]);
+  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) return Math.max(0, parts[0] * 60 + parts[1]);
+  if (parts.length === 3 && !isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+    return Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2]);
+  }
+  return 0;
+}
+
 // Background job processor
 async function processJob(
   jobId: string,
   videoFilePath: string,
   originalName: string,
   langRequested: string,
-  model: string
+  model: string,
+  startTime?: string,
+  endTime?: string,
+  offsetTimestamps: boolean = true
 ) {
   const job = jobsMap.get(jobId);
   if (!job) return;
@@ -292,28 +308,35 @@ async function processJob(
     // Step 1: Extract Audio with FFmpeg
     job.status = 'extracting';
     job.progress = 15;
-    job.message = 'در حال استخراج صوت از ویدیو با FFmpeg...';
+    const startSec = parseTimeString(startTime);
+    const endSec = parseTimeString(endTime);
+
+    if (startSec > 0 || (endSec > 0 && endSec > startSec)) {
+      job.message = `در حال برش و استخراج بخش انتخابی (${startTime || '00:00'} تا ${endTime || 'پایان'}) با FFmpeg...`;
+    } else {
+      job.message = 'در حال استخراج صوت از ویدیو با FFmpeg...';
+    }
     job.updated_at = Date.now();
 
     let duration = 0;
     try {
-      await execFileAsync(
-        'ffmpeg',
-        [
-          '-y',
-          '-i',
-          videoFilePath,
-          '-vn',
-          '-ac',
-          '1',
-          '-ar',
-          '16000',
-          '-b:a',
-          '64k',
-          audioPath,
-        ],
-        { timeout: 180000 }
+      const ffmpegArgs = ['-y'];
+      if (startSec > 0) {
+        ffmpegArgs.push('-ss', String(startSec));
+      }
+      if (endSec > startSec) {
+        ffmpegArgs.push('-to', String(endSec));
+      }
+      ffmpegArgs.push(
+        '-i', videoFilePath,
+        '-vn',
+        '-ac', '1',
+        '-ar', '16000',
+        '-b:a', '64k',
+        audioPath
       );
+
+      await execFileAsync('ffmpeg', ffmpegArgs, { timeout: 180000 });
 
       duration = await probeDuration(audioPath);
       if (duration <= 0) {
@@ -348,18 +371,39 @@ async function processJob(
 
     clearInterval(progressTimer);
 
+    // Apply timestamp offset if requested and starting from > 0
+    let finalSrtText = srtText;
+    let finalSegments = segments;
+    if (offsetTimestamps && startSec > 0) {
+      finalSegments = segments.map((seg) => {
+        const adjustedStart = seg.start + startSec;
+        const adjustedEnd = seg.end + startSec;
+        return {
+          ...seg,
+          start: adjustedStart,
+          end: adjustedEnd,
+          startTime: formatSrtTimestamp(adjustedStart),
+          endTime: formatSrtTimestamp(adjustedEnd),
+        };
+      });
+      finalSrtText = '';
+      for (const seg of finalSegments) {
+        finalSrtText += `${seg.id}\n${seg.startTime} --> ${seg.endTime}\n${seg.text}\n\n`;
+      }
+    }
+
     // Step 3: Save UTF-8 SRT file
-    fs.writeFileSync(srtPath, srtText, 'utf-8');
+    fs.writeFileSync(srtPath, finalSrtText.trim() + '\n', 'utf-8');
 
     job.status = 'completed';
     job.progress = 100;
     job.message =
-      segments.length > 0 && segments[0].text !== '[بدون گفتار یا موسیقی بدون کلام]'
-        ? `رونویسی متن ویدیو با موفقیت انجام شد (${segments.length} بند زیرنویس استخراج شد).`
+      finalSegments.length > 0 && finalSegments[0].text !== '[بدون گفتار یا موسیقی بدون کلام]'
+        ? `رونویسی متن ویدیو با موفقیت انجام شد (${finalSegments.length} بند زیرنویس استخراج شد).`
         : 'پردازش پایان یافت. هیچ گفتار واضحی در این ویدیو شناسایی نشد.';
     job.language_detected = detectedLang;
     job.language_probability = 0.98;
-    job.segments_count = segments.length;
+    job.segments_count = finalSegments.length;
     job.srt_path = srtPath;
     job.updated_at = Date.now();
 
@@ -414,6 +458,9 @@ app.post('/api/jobs/upload', verifyApiToken, upload.single('file'), (req: Reques
 
   const language = (req.body.language || 'auto').toString();
   const model = (req.body.model || process.env.WHISPER_MODEL || 'base').toString();
+  const startTime = req.body.start_time ? String(req.body.start_time).trim() : undefined;
+  const endTime = req.body.end_time ? String(req.body.end_time).trim() : undefined;
+  const offsetTimestamps = req.body.offset_timestamps !== 'false' && req.body.offset_timestamps !== false;
   const originalName = req.file.originalname;
 
   const jobId = crypto.randomBytes(18).toString('base64url');
@@ -447,7 +494,7 @@ app.post('/api/jobs/upload', verifyApiToken, upload.single('file'), (req: Reques
 
   // Trigger background job asynchronously
   setTimeout(() => {
-    processJob(jobId, targetVideoPath, originalName, language, model);
+    processJob(jobId, targetVideoPath, originalName, language, model, startTime, endTime, offsetTimestamps);
   }, 100);
 
   res.json({

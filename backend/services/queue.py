@@ -113,7 +113,16 @@ class JobManager:
                 message="در حال استخراج فایل صوتی از ویدیو با FFmpeg..."
             )
 
-            audio_duration = extract_audio_for_whisper(video_path, wav_path)
+            start_time = job.get("start_time")
+            end_time = job.get("end_time")
+            offset_timestamps = job.get("offset_timestamps", True)
+
+            audio_duration, start_offset = extract_audio_for_whisper(
+                video_path,
+                wav_path,
+                start_time=start_time,
+                end_time=end_time
+            )
             self.update_job(job_id, duration=round(audio_duration, 2), progress=15.0)
 
             # Step 2: Transcribe via faster-whisper
@@ -126,12 +135,15 @@ class JobManager:
             def on_progress(percent: float, text: str):
                 self.update_job(job_id, progress=percent, message=text)
 
+            time_offset = start_offset if offset_timestamps else 0.0
+
             srt_content, segments, detected_lang, lang_prob = transcribe_audio_file(
                 audio_path=wav_path,
                 language_code=job["language_requested"],
                 model_name=job.get("model") or config.WHISPER_MODEL,
                 total_duration=audio_duration,
-                progress_callback=on_progress
+                progress_callback=on_progress,
+                time_offset=time_offset
             )
 
             # Step 3: Save SRT file into storage with UTF-8 encoding
